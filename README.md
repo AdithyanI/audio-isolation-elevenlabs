@@ -1,4 +1,19 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Audio Noise Cleaner
+
+A web application that cleans up audio from video files using ElevenLabs AI.
+
+## Environment Variables
+
+Before running this project, you need to set up your environment variables:
+
+1. Copy `.env.example` to a new file named `.env`
+2. Fill in your ElevenLabs API key in the `.env` file:
+
+```env
+ELEVENLABS_API_KEY=your_api_key_here
+```
+
+You can get your API key from [ElevenLabs Dashboard](https://elevenlabs.io/dashboard).
 
 ## Getting Started
 

@@ -59,8 +59,8 @@ export default function VideoProcessor() {
       }
 
       const blob = await response.blob()
-      const url = URL.createObjectURL(blob)
-      setDownloadUrl(url)
+      const downloadObjectUrl = URL.createObjectURL(blob)
+      setDownloadUrl(downloadObjectUrl)
     } catch (error) {
       console.error('Error processing video:', error)
       setError(error instanceof Error ? error.message : 'An unexpected error occurred. Please try again.')
