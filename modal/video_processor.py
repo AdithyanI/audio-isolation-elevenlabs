@@ -26,8 +26,12 @@ def stream_to_s3(stream: BinaryIO, bucket: str, key: str) -> str:
         region_name=os.environ['AWS_REGION']
     )
     
-    # Initialize multipart upload
-    mpu = s3.create_multipart_upload(Bucket=bucket, Key=key)
+    # Initialize multipart upload with Content-Type metadata
+    mpu = s3.create_multipart_upload(
+        Bucket=bucket, 
+        Key=key,
+        ContentType='video/mp4'  # Set the MIME type here
+    )
     
     try:
         parts = []
