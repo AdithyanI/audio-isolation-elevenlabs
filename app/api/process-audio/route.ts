@@ -1,5 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { ElevenLabsClient } from 'elevenlabs'
+import { uploadToS3 } from '@/lib/s3'
+import { Readable } from 'stream'
+import { Buffer } from 'buffer'
+
+async function streamToBuffer(stream: Readable): Promise<Buffer> {
+  const chunks: Buffer[] = []
+  
+  for await (const chunk of stream) {
+    chunks.push(Buffer.from(chunk))
+  }
+  
+  return Buffer.concat(chunks)
+}
 
 export async function POST(req: NextRequest) {
   try {
@@ -17,15 +30,27 @@ export async function POST(req: NextRequest) {
 
     const client = new ElevenLabsClient({ apiKey })
 
-    const response = await client.audioIsolation.audioIsolation({
-      audio: audio.stream()
+    // Convert File to ArrayBuffer
+    const arrayBuffer = await audio.arrayBuffer()
+    const uint8Array = new Uint8Array(arrayBuffer)
+
+    // Process audio with ElevenLabs
+    const processedAudio = await client.audioIsolation.audioIsolation({
+      audio: new Blob([uint8Array], { type: audio.type })
     })
 
-    return new NextResponse(response, {
-      headers: {
-        'Content-Type': 'audio/wav',
-      },
-    })
+    // Convert the stream to buffer
+    const buffer = await streamToBuffer(processedAudio as unknown as Readable)
+
+    // Generate a unique filename
+    const fileName = `${Date.now()}-${audio.name.replace(/\.[^/.]+$/, '')}.wav`
+
+    // Upload to S3 and get the public URL
+    const publicUrl = await uploadToS3(buffer, fileName)
+
+    // Return the public URL
+    return NextResponse.json({ url: publicUrl })
+
   } catch (error) {
     console.error('Error processing audio:', error)
     let errorMessage = 'An unexpected error occurred while processing the audio'

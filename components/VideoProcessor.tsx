@@ -12,7 +12,7 @@ export default function VideoProcessor() {
   const [file, setFile] = useState<File | null>(null)
   const [url, setUrl] = useState('')
   const [processing, setProcessing] = useState(false)
-  const [downloadUrl, setDownloadUrl] = useState<string | null>(null)
+  const [processedUrl, setProcessedUrl] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const onDrop = (acceptedFiles: File[]) => {
@@ -58,9 +58,8 @@ export default function VideoProcessor() {
         throw new Error(errorData.error || 'Audio processing failed')
       }
 
-      const blob = await response.blob()
-      const downloadObjectUrl = URL.createObjectURL(blob)
-      setDownloadUrl(downloadObjectUrl)
+      const data = await response.json()
+      setProcessedUrl(data.url)
     } catch (error) {
       console.error('Error processing video:', error)
       setError(error instanceof Error ? error.message : 'An unexpected error occurred. Please try again.')
@@ -156,17 +155,18 @@ export default function VideoProcessor() {
             )}
           </Button>
 
-          {downloadUrl && (
+          {processedUrl && (
             <Button
               variant="secondary"
               asChild
               className="w-full"
             >
               <a
-                href={downloadUrl}
-                download="processed_audio.wav"
+                href={processedUrl}
+                target="_blank"
+                rel="noopener noreferrer"
               >
-                Download Processed Audio
+                Open Processed Audio
               </a>
             </Button>
           )}
