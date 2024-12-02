@@ -12,7 +12,11 @@ export default function VideoProcessor() {
   const [file, setFile] = useState<File | null>(null)
   const [url, setUrl] = useState('')
   const [processing, setProcessing] = useState(false)
-  const [processedUrl, setProcessedUrl] = useState<string | null>(null)
+  const [processedUrls, setProcessedUrls] = useState<{
+    originalVideo?: string;
+    processedAudio?: string;
+    finalVideo?: string;
+  } | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const onDrop = (acceptedFiles: File[]) => {
@@ -59,7 +63,7 @@ export default function VideoProcessor() {
       }
 
       const data = await response.json()
-      setProcessedUrl(data.url)
+      setProcessedUrls(data)
     } catch (error) {
       console.error('Error processing video:', error)
       setError(error instanceof Error ? error.message : 'An unexpected error occurred. Please try again.')
@@ -155,20 +159,56 @@ export default function VideoProcessor() {
             )}
           </Button>
 
-          {processedUrl && (
-            <Button
-              variant="secondary"
-              asChild
-              className="w-full"
-            >
-              <a
-                href={processedUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                Open Processed Audio
-              </a>
-            </Button>
+          {processedUrls && (
+            <div className="space-y-2">
+              {processedUrls.originalVideo && (
+                <Button
+                  variant="secondary"
+                  asChild
+                  className="w-full"
+                >
+                  <a
+                    href={processedUrls.originalVideo}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Open Original Video
+                  </a>
+                </Button>
+              )}
+              
+              {processedUrls.processedAudio && (
+                <Button
+                  variant="secondary"
+                  asChild
+                  className="w-full"
+                >
+                  <a
+                    href={processedUrls.processedAudio}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Open Processed Audio
+                  </a>
+                </Button>
+              )}
+
+              {processedUrls.finalVideo && (
+                <Button
+                  variant="default"
+                  asChild
+                  className="w-full"
+                >
+                  <a
+                    href={processedUrls.finalVideo}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Open Final Video
+                  </a>
+                </Button>
+              )}
+            </div>
           )}
         </div>
       </CardContent>

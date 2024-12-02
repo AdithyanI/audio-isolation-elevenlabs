@@ -28,9 +28,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'No audio file provided' }, { status: 400 })
     }
 
+    // First, upload the original video to S3
+    const videoBuffer = Buffer.from(await audio.arrayBuffer())
+    const originalVideoName = `${Date.now()}-original-${audio.name}`
+    const videoUrl = await uploadToS3(videoBuffer, `original-videos/${originalVideoName}`)
+
     const client = new ElevenLabsClient({ apiKey })
 
-    // Convert File to ArrayBuffer
+    // Convert File to ArrayBuffer for ElevenLabs
     const arrayBuffer = await audio.arrayBuffer()
     const uint8Array = new Uint8Array(arrayBuffer)
 
@@ -40,16 +45,24 @@ export async function POST(req: NextRequest) {
     })
 
     // Convert the stream to buffer
-    const buffer = await streamToBuffer(processedAudio as unknown as Readable)
+    const audioBuffer = await streamToBuffer(processedAudio as unknown as Readable)
 
-    // Generate a unique filename
-    const fileName = `${Date.now()}-${audio.name.replace(/\.[^/.]+$/, '')}.wav`
+    // Generate a unique filename for processed audio
+    const audioFileName = `${Date.now()}-processed-${audio.name.replace(/\.[^/.]+$/, '')}.wav`
+    const audioUrl = await uploadToS3(audioBuffer, `processed-audio/${audioFileName}`)
 
-    // Upload to S3 and get the public URL
-    const publicUrl = await uploadToS3(buffer, fileName)
+    // TODO: Call Modal function here to merge video and audio
+    // const modalResponse = await fetch('YOUR_MODAL_FUNCTION_URL', {
+    //   method: 'POST',
+    //   body: JSON.stringify({ videoUrl, audioUrl }),
+    // })
 
-    // Return the public URL
-    return NextResponse.json({ url: publicUrl })
+    // For now, return both URLs
+    return NextResponse.json({ 
+      originalVideo: videoUrl,
+      processedAudio: audioUrl,
+      // finalVideo: will come from Modal later
+    })
 
   } catch (error) {
     console.error('Error processing audio:', error)
