@@ -1,0 +1,5 @@
+modal
+python-dotenv
+boto3
+ffmpeg-python
+requests 
