@@ -14,7 +14,6 @@ export default function VideoProcessor() {
   const [processing, setProcessing] = useState(false)
   const [processingStage, setProcessingStage] = useState<'idle' | 'audio-isolation' | 'video-merge'>('idle')
   const [processedUrls, setProcessedUrls] = useState<{
-    originalVideo?: string;
     processedAudio?: string;
     finalVideo?: string;
   } | null>(null)
@@ -46,10 +45,7 @@ export default function VideoProcessor() {
     
     try {
       if (url) {
-        const response = await fetch(url)
-        if (!response.ok) throw new Error(`Failed to fetch video from URL: ${response.statusText}`)
-        const blob = await response.blob()
-        formData.append('audio', blob, 'video.mp4')
+        formData.append('videoUrl', url)
       } else if (file) {
         formData.append('audio', file)
       }
@@ -167,22 +163,6 @@ export default function VideoProcessor() {
 
           {processedUrls && (
             <div className="space-y-2">
-              {processedUrls.originalVideo && (
-                <Button
-                  variant="secondary"
-                  asChild
-                  className="w-full"
-                >
-                  <a
-                    href={processedUrls.originalVideo}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    Open Original Video
-                  </a>
-                </Button>
-              )}
-              
               {processedUrls.processedAudio && (
                 <Button
                   variant="secondary"
