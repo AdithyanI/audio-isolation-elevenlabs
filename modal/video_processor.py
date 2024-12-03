@@ -241,22 +241,22 @@ async def check_status(job_id: str):
 def extract_audio(job_id: str, video_url: str) -> None:
     """
     Background task to extract audio from video
-    Puts the result in the queue when done
+    Outputs 16kHz mono WAV format optimized for Whisper model
     """
     try:
         print(f"Starting audio extraction for job {job_id}")  # Debug log
         bucket = "cache-aip-us"
         destination_key = f"extracted-audio/{job_id}.wav"
         
-        # FFmpeg command to extract audio
+        # FFmpeg command optimized for Whisper
         cmd = [
             'ffmpeg',
             '-i', video_url,
-            '-vn',  # Skip video
-            '-acodec', 'pcm_s16le',  # Use WAV format
-            '-ar', '44100',  # 44.1kHz sample rate
-            '-ac', '2',  # Stereo
-            '-f', 'wav',
+            '-vn',                # Skip video
+            '-acodec', 'pcm_s16le',  # 16-bit PCM
+            '-ar', '16000',         # 16kHz sampling rate (Whisper requirement)
+            '-ac', '1',             # Mono audio
+            '-f', 'wav',            # WAV format
             'pipe:1'
         ]
         
