@@ -3,16 +3,18 @@ import modal
 import tempfile
 import subprocess
 import uuid
-from typing import BinaryIO
+from typing import BinaryIO, Dict
+from fastapi import HTTPException
 
-# Define the Modal app
+# Define the Modal app and queue
 app = modal.App("video-processor")
+queue = modal.Queue.from_name("video-processing-queue", create_if_missing=True)
 
 # Create an image with ffmpeg and required Python packages
 image = (
     modal.Image.debian_slim(python_version="3.12")
     .apt_install("ffmpeg")
-    .pip_install("boto3")
+    .pip_install("boto3", "fastapi")
 )
 
 def stream_to_s3(stream: BinaryIO, bucket: str, key: str) -> str:
@@ -80,55 +82,134 @@ def stream_to_s3(stream: BinaryIO, bucket: str, key: str) -> str:
     image=image,
     secrets=[modal.Secret.from_name("aws-secret")]
 )
-def merge_video_audio(video_url: str, audio_url: str) -> str:
+def process_video(job_id: str, video_url: str, audio_url: str) -> None:
     """
-    Merge video and audio from public URLs and stream result directly to S3
-    Takes only video stream from video_url and only audio stream from audio_url.
-    Returns the URL of the merged video
+    Background task to process video and audio merge
+    Puts the result in the queue when done
     """
     try:
         bucket = "cache-aip-us"
-        destination_key = f"final-videos/{uuid.uuid4()}.mp4"
+        destination_key = f"final-videos/{job_id}.mp4"
         
-        # Set up ffmpeg command to output to pipe
+        # Your existing ffmpeg command setup
         cmd = [
             'ffmpeg',
-            '-i', video_url,      # Input video
-            '-i', audio_url,      # Input audio
-            '-map', '0:v:0',      # Take video stream from first input
-            '-map', '1:a:0',      # Take audio stream from second input
-            '-c:v', 'copy',       # Copy video codec (no re-encoding)
-            '-c:a', 'aac',        # Use AAC for audio
-            '-shortest',          # End when shortest input ends
-            '-movflags', 'frag_keyframe+empty_moov',  # Enable streaming
-            '-f', 'mp4',          # Force MP4 format
-            'pipe:1'              # Output to pipe
+            '-i', video_url,
+            '-i', audio_url,
+            '-map', '0:v:0',
+            '-map', '1:a:0',
+            '-c:v', 'copy',
+            '-c:a', 'aac',
+            '-shortest',
+            '-movflags', 'frag_keyframe+empty_moov',
+            '-f', 'mp4',
+            'pipe:1'
         ]
         
-        # Run ffmpeg command and stream output to S3
         process = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE
         )
         
-        # Stream the output to S3
         final_url = stream_to_s3(process.stdout, bucket, destination_key)
         
-        # Check for any ffmpeg errors
         stderr = process.communicate()[1]
         if process.returncode != 0:
-            raise Exception(f"FFmpeg error: {stderr.decode()}")
+            queue.put({"job_id": job_id, "status": "error", "error": stderr.decode()})
+            return
             
-        return final_url
+        # Put successful result in queue
+        queue.put({
+            "job_id": job_id,
+            "status": "completed",
+            "url": final_url
+        })
         
     except Exception as e:
-        raise Exception(f"Error processing video: {str(e)}")
+        queue.put({
+            "job_id": job_id,
+            "status": "error",
+            "error": str(e)
+        })
 
+@app.function(
+    image=image,
+    secrets=[modal.Secret.from_name("aws-secret")]
+)
+@modal.web_endpoint(method="POST")
+async def start_merge(data: Dict[str, str]):
+    """
+    Web endpoint to start video processing
+    Expects JSON body with:
+    {
+        "video_url": "https://...",
+        "audio_url": "https://..."
+    }
+    """
+    try:
+        video_url = data.get("video_url")
+        audio_url = data.get("audio_url")
+        
+        if not video_url or not audio_url:
+            raise HTTPException(status_code=400, detail="Missing video_url or audio_url")
+            
+        job_id = str(uuid.uuid4())
+        
+        # Spawn the processing task
+        process_video.spawn(job_id, video_url, audio_url)
+        
+        return {
+            "job_id": job_id,
+            "status": "processing",
+            "message": "Video processing started"
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.function(
+    image=image,
+    secrets=[modal.Secret.from_name("aws-secret")]
+)
+@modal.web_endpoint(method="GET")
+async def check_status(job_id: str):
+    """
+    Check the status of a processing job
+    """
+    try:
+        # Try to get the result from the queue
+        result = queue.get(timeout=0)
+        
+        if result and result.get("job_id") == job_id:
+            return result
+        else:
+            # Put the result back if it's not for this job
+            if result:
+                queue.put(result)
+            return {"job_id": job_id, "status": "processing"}
+            
+    except modal.Queue.Empty:
+        return {"job_id": job_id, "status": "processing"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Update the test function to demonstrate the new flow
 @app.local_entrypoint()
 def test():
     """Test the function locally"""
     video_url = "https://cache-aip-us.s3.us-east-1.amazonaws.com/processed-audio/original-videos/1733173125620-original-0u1ds4amped-Voice%20Isolator%20Demo.mp4"
     audio_url = "https://cache-aip-us.s3.us-east-1.amazonaws.com/processed-audio/processed-audio/1733173139930-processed-0u1ds4amped-Voice%20Isolator%20Demo.wav"
-    result = merge_video_audio.remote(video_url, audio_url)
-    print(f"Merged video available at: {result}") 
+    
+    # Start the merge
+    result = start_merge.remote({"video_url": video_url, "audio_url": audio_url})
+    print(f"Started processing with job ID: {result['job_id']}")
+    
+    # Poll for status (in real usage, this would be done by the frontend)
+    import time
+    while True:
+        status = check_status.remote(result['job_id'])
+        print(f"Status: {status}")
+        if status['status'] != 'processing':
+            break
+        time.sleep(5) 
