@@ -122,6 +122,7 @@ def process_video(job_id: str, video_url: str, audio_url: str) -> None:
         # Put successful result in queue
         queue.put({
             "job_id": job_id,
+            "operation": "merge",
             "status": "completed",
             "url": final_url
         })
@@ -177,39 +178,174 @@ async def check_status(job_id: str):
     """
     Check the status of a processing job
     """
-    try:
-        # Try to get the result from the queue
-        result = queue.get(timeout=0)
+    if not job_id:
+        raise HTTPException(status_code=400, detail="Missing job_id parameter")
         
-        if result and result.get("job_id") == job_id:
-            return result
-        else:
-            # Put the result back if it's not for this job
-            if result:
-                queue.put(result)
-            return {"job_id": job_id, "status": "processing"}
+    try:
+        # Get all messages from queue and check each one
+        all_results = []
+        matching_result = None
+        
+        try:
+            while True:
+                try:
+                    result = queue.get(timeout=0)
+                    print(f"Got queue message: {result}")  # Debug log
+                    
+                    if result and result.get("job_id") == job_id:
+                        matching_result = result
+                    else:
+                        all_results.append(result)
+                except TimeoutError:
+                    print("Queue timeout - no more messages")  # Debug log
+                    break
+                except Exception as e:
+                    print(f"Error getting message from queue: {str(e)}")  # Debug log
+                    break
             
-    except modal.Queue.Empty:
-        return {"job_id": job_id, "status": "processing"}
+            # Put back all other results
+            for result in all_results:
+                try:
+                    queue.put(result)
+                except Exception as e:
+                    print(f"Error putting message back in queue: {str(e)}")  # Debug log
+                
+            # Return matching result if found, otherwise return processing
+            if matching_result:
+                return matching_result
+            return {
+                "job_id": job_id,
+                "status": "processing",
+                "message": "Job is still processing"
+            }
+                
+        except Exception as e:
+            print(f"Error in queue operations: {str(e)}")  # Debug log
+            return {
+                "job_id": job_id,
+                "status": "error",
+                "error": f"Queue error: {str(e)}"
+            }
+            
+    except Exception as e:
+        print(f"Unexpected error in check_status: {str(e)}")  # Debug log
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error checking status: {str(e)}"
+        )
+
+@app.function(
+    image=image,
+    secrets=[modal.Secret.from_name("aws-secret")]
+)
+def extract_audio(job_id: str, video_url: str) -> None:
+    """
+    Background task to extract audio from video
+    Puts the result in the queue when done
+    """
+    try:
+        print(f"Starting audio extraction for job {job_id}")  # Debug log
+        bucket = "cache-aip-us"
+        destination_key = f"extracted-audio/{job_id}.wav"
+        
+        # FFmpeg command to extract audio
+        cmd = [
+            'ffmpeg',
+            '-i', video_url,
+            '-vn',  # Skip video
+            '-acodec', 'pcm_s16le',  # Use WAV format
+            '-ar', '44100',  # 44.1kHz sample rate
+            '-ac', '2',  # Stereo
+            '-f', 'wav',
+            'pipe:1'
+        ]
+        
+        print(f"Running FFmpeg command: {' '.join(cmd)}")  # Debug log
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
+        )
+        
+        print("Starting S3 upload...")  # Debug log
+        final_url = stream_to_s3(process.stdout, bucket, destination_key)
+        
+        stderr = process.communicate()[1]
+        if process.returncode != 0:
+            print(f"FFmpeg error: {stderr.decode()}")  # Debug log
+            queue.put({"job_id": job_id, "status": "error", "error": stderr.decode()})
+            return
+            
+        print(f"Upload complete: {final_url}")  # Debug log
+        # Put successful result in queue
+        queue.put({
+            "job_id": job_id,
+            "operation": "extract",
+            "status": "completed",
+            "url": final_url
+        })
+        print(f"Job {job_id} completed successfully")  # Debug log
+        
+    except Exception as e:
+        print(f"Error in extraction: {str(e)}")  # Debug log
+        queue.put({
+            "job_id": job_id,
+            "status": "error",
+            "error": str(e)
+        })
+
+@app.function(
+    image=image,
+    secrets=[modal.Secret.from_name("aws-secret")]
+)
+@modal.web_endpoint(method="POST")
+async def start_audio_extraction(data: Dict[str, str]):
+    """
+    Web endpoint to start audio extraction
+    Expects JSON body with:
+    {
+        "video_url": "https://..."
+    }
+    """
+    try:
+        video_url = data.get("video_url")
+        
+        if not video_url:
+            raise HTTPException(status_code=400, detail="Missing video_url")
+            
+        job_id = str(uuid.uuid4())
+        
+        # Spawn the extraction task
+        extract_audio.spawn(job_id, video_url)
+        
+        return {
+            "job_id": job_id,
+            "status": "processing",
+            "message": "Audio extraction started"
+        }
+        
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# Update the test function to demonstrate the new flow
+# Update test function to include audio extraction test
 @app.local_entrypoint()
 def test():
-    """Test the function locally"""
+    """Test the functions locally"""
+    # Test audio extraction
+    print("\nTesting audio extraction...")
     video_url = "https://cache-aip-us.s3.us-east-1.amazonaws.com/processed-audio/original-videos/1733173125620-original-0u1ds4amped-Voice%20Isolator%20Demo.mp4"
-    audio_url = "https://cache-aip-us.s3.us-east-1.amazonaws.com/processed-audio/processed-audio/1733173139930-processed-0u1ds4amped-Voice%20Isolator%20Demo.wav"
+    job_id = str(uuid.uuid4())
+    extract_audio.local(job_id, video_url)
+    print(f"Started extraction with job ID: {job_id}")
     
-    # Start the merge
-    result = start_merge.remote({"video_url": video_url, "audio_url": audio_url})
-    print(f"Started processing with job ID: {result['job_id']}")
-    
-    # Poll for status (in real usage, this would be done by the frontend)
+    # Poll for status of the extraction job
     import time
-    while True:
-        status = check_status.remote(result['job_id'])
-        print(f"Status: {status}")
-        if status['status'] != 'processing':
-            break
-        time.sleep(5) 
+    jobs = [job_id]
+    while jobs:
+        for job_id in jobs[:]:
+            status = check_status.remote(job_id)
+            print(f"Status for {job_id}: {status}")
+            if status['status'] != 'processing':
+                jobs.remove(job_id)
+        if jobs:
+            time.sleep(5) 
