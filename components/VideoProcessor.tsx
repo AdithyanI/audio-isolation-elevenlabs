@@ -12,6 +12,7 @@ export default function VideoProcessor() {
   const [file, setFile] = useState<File | null>(null)
   const [url, setUrl] = useState('')
   const [processing, setProcessing] = useState(false)
+  const [processingStage, setProcessingStage] = useState<'idle' | 'audio-isolation' | 'video-merge'>('idle')
   const [processedUrls, setProcessedUrls] = useState<{
     originalVideo?: string;
     processedAudio?: string;
@@ -38,6 +39,7 @@ export default function VideoProcessor() {
     }
 
     setProcessing(true)
+    setProcessingStage('audio-isolation')
     setError(null)
 
     const formData = new FormData()
@@ -64,9 +66,11 @@ export default function VideoProcessor() {
 
       const data = await response.json()
       setProcessedUrls(data)
+      setProcessingStage('video-merge')
     } catch (error) {
       console.error('Error processing video:', error)
       setError(error instanceof Error ? error.message : 'An unexpected error occurred. Please try again.')
+      setProcessingStage('idle')
     } finally {
       setProcessing(false)
     }
@@ -152,7 +156,9 @@ export default function VideoProcessor() {
             {processing ? (
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Processing...
+                {processingStage === 'audio-isolation' 
+                  ? 'Isolating Audio...' 
+                  : 'Merging Video...'}
               </>
             ) : (
               'Process Video'
